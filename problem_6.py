@@ -36,20 +36,24 @@ def triangular_inverse(lower, CHUNK: tl.constexpr):
     inverse = tl.where(rows == cols, 1.0, 0.0)
 
     for r in range(1, INVERSE_BLOCK):
+        # --- STUDENT IMPLEMENTATION REQUIRED: P6.INVERSE.SUBSTITUTE ---
         # Forward-substitute row r in every diagonal block. Update inverse [C,C].
         weighted = tl.dot(block_lower, inverse)
         # inverse[r, :] = inverse[r, :] - weighted[r, :]
         inverse = tl.where(rows % INVERSE_BLOCK == r, inverse - weighted, inverse)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
     for level in tl.static_range(6):
         if INVERSE_BLOCK * 2**level < CHUNK:
             merged = rows // (INVERSE_BLOCK * 2 ** (level + 1)) == cols // (INVERSE_BLOCK * 2 ** (level + 1))
             lower_left = (rows // (INVERSE_BLOCK * 2**level) == cols // (INVERSE_BLOCK * 2**level) + 1) & merged
 
+            # --- STUDENT IMPLEMENTATION REQUIRED: P6.INVERSE.MERGE ---
             # Apply the lower-left block inverse identity. Update inverse only in lower_left.
             c = tl.where(lower_left, lower, 0.0)
             product = tl.dot(tl.dot(inverse, c), inverse)
             inverse = tl.where(lower_left, -product, inverse)
+            # --- END OF STUDENT IMPLEMENTATION ---
 
     return inverse
 
@@ -73,12 +77,16 @@ def _chunk_wy_representation(
         key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P6.WY.GRAM ---
         # Accumulate beta-weighted key Gram matrix across key tiles.
         lower += beta[:, None] * tl.dot(k, tl.trans(k))
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+    # --- STUDENT IMPLEMENTATION REQUIRED: P6.WY.STRICT ---
     # Finish L with STRICT causality.
     lower_mask = chunk_offsets[:, None] > chunk_offsets[None, :]
     lower = tl.where(lower_mask, lower, 0.0)
+    # --- END OF STUDENT IMPLEMENTATION ---
 
     # A = (I + L)^{-1} for the strictly lower triangular L
     inverse = triangular_inverse(lower, CHUNK)
@@ -89,9 +97,11 @@ def _chunk_wy_representation(
         key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P6.WY.W ---
         # Set w [C,BLOCK_K] using A and beta-weighted keys.
         beta_k = beta[:, None] * k
         w = tl.dot(inverse, beta_k)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(W, batch_head * seq_len, rows, key_offsets, HEAD_DIM), w.to(W.dtype.element_ty))
 
@@ -99,9 +109,11 @@ def _chunk_wy_representation(
         value_offsets = value_block * BLOCK_V + tl.arange(0, BLOCK_V)
         v = tl.load(tile_ptrs(V, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P6.WY.U ---
         # Set u [C,BLOCK_V] using A and beta-weighted values.
         beta_v = beta[:, None] * v
         u = tl.dot(inverse, beta_v)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(U, batch_head * seq_len, rows, value_offsets, VALUE_DIM), u.to(U.dtype.element_ty))
 
@@ -128,6 +140,7 @@ def _chunk_state_forward(
         w = tl.load(tile_ptrs(W, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         u = tl.load(tile_ptrs(U, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P6.STATE.PSEUDO ---
         # Set pseudo_values [C,BLOCK_V] from u, w and the entry state.
         KEY_TILE: tl.constexpr = min(HEAD_DIM, INVERSE_BLOCK)
         tl.static_assert(HEAD_DIM % KEY_TILE == 0)
@@ -143,9 +156,11 @@ def _chunk_state_forward(
             prediction = tl.dot(w_tile, state_tile, acc=prediction)
 
         pseudo_values = u.to(tl.float32) - prediction
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(PseudoValues, batch_head * seq_len, rows, value_offsets, VALUE_DIM), pseudo_values.to(PseudoValues.dtype.element_ty))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P6.STATE.UPDATE ---
         # Advance the boundary using K.T @ pseudo_values.
         # state = tl.dot(tl.trans(k).to(tl.float32), pseudo_values, acc=state)
         tl.static_assert(CHUNK % INVERSE_BLOCK == 0, "CHUNK must be divisible by INVERSE_BLOCK for this implementation")
@@ -157,6 +172,7 @@ def _chunk_state_forward(
             p_indices = tl.broadcast_to(token_indices[:, None], (INVERSE_BLOCK, BLOCK_V))
             pseudo_block = tl.gather(pseudo_values, p_indices, axis=0)
             state = tl.dot(tl.trans(k_block), pseudo_block, acc=state)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(States, state_row_base + (chunk + 1) * HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
 

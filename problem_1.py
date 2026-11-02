@@ -25,12 +25,16 @@ def linear_reference_student(query, key, value, scale=None, initial_state=None,
         k = key[:, :, t].to(state.dtype)
         v = value[:, :, t].to(state.dtype)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P1.RECURRENT.UPDATE ---
         # Add the current key/value outer product to state [B,H,Dk,Dv].
         state += k.unsqueeze(-1) @ v.unsqueeze(-2)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P1.RECURRENT.READ ---
         # Set o [B,H,Dv] by reading the UPDATED state with q.
         # [B,H, 1, Dv] = [B,H, 1, Dk] [B,H,Dk,Dv]
         o = (q.unsqueeze(-2) @ state).squeeze(-2)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         out[:, :, t] = o.to(value.dtype)
 
@@ -54,6 +58,7 @@ def linear_chunk_student(query, key, value, scale=None, initial_state=None,
         v = value[:, :, start:end].to(state.dtype)
         rows = torch.arange(end - start, device=query.device)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P1.CHUNK.OUTPUT ---
         # Read the state entering the chunk here. Updating it first would
         # let queries see the future tokens in the chunk.
         o = (q @ state) # [B,H,C,Dv]
@@ -66,10 +71,13 @@ def linear_chunk_student(query, key, value, scale=None, initial_state=None,
         local_scores = local_scores.masked_fill(~causal_mask, 0.0)
         # [B,H,C,Dv] = [B,H,C,C] @ [B,H,C,Dv]
         o += local_scores @ v  # [B,H,C,Dv]
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         out[:, :, start:end] = o.to(value.dtype)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P1.CHUNK.STATE ---
         # Output is computed already so we can add all of this chunk to memory
         state += k.transpose(-1, -2) @ v
+        # --- END OF STUDENT IMPLEMENTATION ---
 
     return finish(out, state, output_final_state)

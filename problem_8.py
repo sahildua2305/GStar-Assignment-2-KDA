@@ -55,26 +55,24 @@ def _recurrent_forward(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P8.RECURRENT.DECAY ---
         # Apply channel-wise forgetting BEFORE prediction.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P8.RECURRENT.DECAY: implement this subpart")
+        decayed_state = tl.exp(gate)[:, None] * state
         # --- END OF STUDENT IMPLEMENTATION ---
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P8.RECURRENT.RESIDUAL ---
         # Set error [BLOCK_V] using the decayed previous state.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P8.RECURRENT.RESIDUAL: implement this subpart")
+        v_old = tl.sum(k[:, None] * decayed_state, axis=0)
+        u = beta * (v - v_old)
         # --- END OF STUDENT IMPLEMENTATION ---
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P8.RECURRENT.WRITE ---
         # Apply the beta-weighted rank-one correction.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P8.RECURRENT.WRITE: implement this subpart")
+        state = decayed_state + k[:, None] * u[None, :]
         # --- END OF STUDENT IMPLEMENTATION ---
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P8.RECURRENT.READ ---
         # Set out using the updated state.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P8.RECURRENT.READ: implement this subpart")
+        weights = q[:, None] * state
+        out = tl.sum(weights, axis=0)
         # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(out_ptrs + t * VALUE_DIM, out.to(Out.dtype.element_ty))
@@ -89,8 +87,9 @@ def gated_scores_diagonal(left, key, left_cumsum, key_cumsum):
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P8.DIAGONAL.SCORES ---
     # Return [SUB,SUB] direct FP32 gated scores. Clamp differences at zero before exp; caller masks future entries.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P8.DIAGONAL.SCORES: implement this subpart")
+    diffs = left_cumsum[:, None, :] - key_cumsum[None, :, :]
+    ans = left[:, None, :] * tl.exp(tl.minimum(diffs, 0.0)) * key[None, :, :]
+    return tl.sum(ans, axis=-1)
     # --- END OF STUDENT IMPLEMENTATION ---
 
 
@@ -125,23 +124,24 @@ def _chunk_kernel_matrix(
                 else:
                     # --- STUDENT IMPLEMENTATION REQUIRED: P8.SCORES.ANCHOR ---
                     # For i > j, factor relative decay around anchor; accumulate the [SUB,SUB] dot.
-                    # TODO: replace this assertion with your implementation.
-                    tl.static_assert(False, "P8.SCORES.ANCHOR: implement this subpart")
+                    left_factor = tl.exp(left_cumsum - anchor[None, :])
+                    right_factor = tl.exp(anchor[None, :] - key_cumsum)
+                    block += tl.dot(left.to(tl.float32) * left_factor, tl.trans(k.to(tl.float32) * right_factor))
                     # --- END OF STUDENT IMPLEMENTATION ---
 
             if i == j:
                 if STRICT:
                     # --- STUDENT IMPLEMENTATION REQUIRED: P8.SCORES.STRICT ---
                     # Strict mask for key-key WY scores.
-                    # TODO: replace this assertion with your implementation.
-                    tl.static_assert(False, "P8.SCORES.STRICT: implement this subpart")
+                    strict_mask = sub_offsets[:, None] > sub_offsets[None, :]
+                    block = tl.where(strict_mask, block, 0.0)
                     # --- END OF STUDENT IMPLEMENTATION ---
 
                 else:
                     # --- STUDENT IMPLEMENTATION REQUIRED: P8.SCORES.INCLUSIVE ---
                     # Inclusive mask for query-key output scores.
-                    # TODO: replace this assertion with your implementation.
-                    tl.static_assert(False, "P8.SCORES.INCLUSIVE: implement this subpart")
+                    inclusive_mask = sub_offsets[:, None] >= sub_offsets[None, :]
+                    block = tl.where(inclusive_mask, block, 0.0)
                     # --- END OF STUDENT IMPLEMENTATION ---
 
             tl.store(tile_ptrs(Out, batch_head * seq_len, left_rows, j * SUB + sub_offsets, CHUNK), block)

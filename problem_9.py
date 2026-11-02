@@ -41,8 +41,8 @@ def _chunk_wy_representation(
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P9.WY.LOWER ---
     # Load the supplied STRICT key-key matrix and beta-weight rows to set lower.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P9.WY.LOWER: implement this subpart")
+    score_tile = tl.load(KernelMatrix + (batch_head * seq_len + rows[:, None]) * CHUNK + tl.arange(0, CHUNK))
+    lower = beta[:, None] * score_tile.to(tl.float32)
     # --- END OF STUDENT IMPLEMENTATION ---
 
     inverse = triangular_inverse(lower, CHUNK)
@@ -56,8 +56,9 @@ def _chunk_wy_representation(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P9.WY.W ---
         # Set w using A, beta and channel-wise entry-decayed keys.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P9.WY.W: implement this subpart")
+        k_start = k.to(tl.float32) * tl.exp(gate_cumsum)
+        beta_k = beta[:, None] * k_start
+        w = tl.dot(inverse, beta_k)
         # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(W, batch_head * seq_len, rows, key_offsets, HEAD_DIM), w.to(W.dtype.element_ty))
@@ -68,8 +69,8 @@ def _chunk_wy_representation(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P9.WY.U ---
         # Set u using A and beta-weighted values.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P9.WY.U: implement this subpart")
+        beta_v = beta[:, None] * v.to(tl.float32)
+        u = tl.dot(inverse, beta_v)
         # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(U, batch_head * seq_len, rows, value_offsets, VALUE_DIM), u.to(U.dtype.element_ty))
@@ -97,11 +98,10 @@ def _chunk_state_forward(
             key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
             w = tl.load(tile_ptrs(W, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
             state = tl.load(tile_ptrs(States, state_row_base, key_offsets, value_offsets, VALUE_DIM))
-
+  
             # --- STUDENT IMPLEMENTATION REQUIRED: P9.STATE.REDUCE ---
             # Subtract this key tile contribution from pseudo_values. Finish ALL key tiles before the update loop.
-            # TODO: replace this assertion with your implementation.
-            tl.static_assert(False, "P9.STATE.REDUCE: implement this subpart")
+            pseudo_values -= tl.dot(w.to(tl.float32), state.to(tl.float32))
             # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(PseudoValues, batch_head * seq_len, rows, value_offsets, VALUE_DIM), pseudo_values.to(PseudoValues.dtype.element_ty))
@@ -115,8 +115,9 @@ def _chunk_state_forward(
 
             # --- STUDENT IMPLEMENTATION REQUIRED: P9.STATE.UPDATE ---
             # Decay this entry-state tile and add exit-decayed corrected writes.
-            # TODO: replace this assertion with your implementation.
-            tl.static_assert(False, "P9.STATE.UPDATE: implement this subpart")
+            exit_decay = tl.exp(chunk_decay[None, :] - gate_cumsum)
+            k_end = k.to(tl.float32) * exit_decay
+            state = tl.exp(chunk_decay[:, None]) * state.to(tl.float32) + tl.dot(tl.trans(k_end).to(tl.float32), pseudo_values)
             # --- END OF STUDENT IMPLEMENTATION ---
 
             tl.store(tile_ptrs(States, state_row_base + HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
@@ -141,8 +142,7 @@ def _chunk_output_forward(
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P9.OUTPUT.LOCAL ---
     # Set out from the already-scaled inclusive scores and pseudo-values.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P9.OUTPUT.LOCAL: implement this subpart")
+    out = tl.dot(scores.to(tl.float32), pseudo_values.to(tl.float32))
     # --- END OF STUDENT IMPLEMENTATION ---
 
     for key_block in range(HEAD_DIM // BLOCK_K):
@@ -153,8 +153,8 @@ def _chunk_output_forward(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P9.OUTPUT.ENTRY ---
         # Add the channel-decayed entry-state read. q already includes scale.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P9.OUTPUT.ENTRY: implement this subpart")
+        q_decayed = tl.exp(gate_cumsum) * q.to(tl.float32)
+        out += tl.dot(q_decayed.to(tl.float32), state.to(tl.float32))
         # --- END OF STUDENT IMPLEMENTATION ---
 
     tl.store(tile_ptrs(Out, batch_head * seq_len, rows, value_offsets, VALUE_DIM), out.to(Out.dtype.element_ty))

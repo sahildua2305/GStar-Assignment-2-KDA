@@ -50,13 +50,17 @@ def _recurrent_forward(
         v = tl.load(v_ptrs + t * VALUE_DIM).to(tl.float32)
         gate = tl.load(gate_ptrs + t * HEAD_DIM).to(tl.float32)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P4.RECURRENT.UPDATE ---
         # Decay rows of state with exp(gate), then add the association.
         decayed_state = tl.exp(gate)[:, None] * state 
         state = decayed_state + (k[:, None] * v[None, :])
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P4.RECURRENT.READ ---
         # Read the updated state; q already includes scale.
         weights = q[:, None] * state
         out = tl.sum(weights, axis=0)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(out_ptrs + t * VALUE_DIM, out.to(Out.dtype.element_ty))
 
@@ -72,9 +76,11 @@ def _chunk_cumsum(X, Out, seq_len, DIM: tl.constexpr, CHUNK: tl.constexpr, BLOCK
     cols = dim_block * BLOCK_D + tl.arange(0, BLOCK_D)
     x = tl.load(tile_ptrs(X, batch_head * seq_len, rows, cols, DIM)).to(tl.float32)
 
+    # --- STUDENT IMPLEMENTATION REQUIRED: P4.SCAN.PREFIX ---
     # Compute the inclusive FP32 prefix along tokens and store it at the supplied pointers.
     out = tl.cumsum(x, axis=0)
     tl.store(tile_ptrs(Out, batch_head * seq_len, rows, cols, DIM), out)
+    # --- END OF STUDENT IMPLEMENTATION ---
 
 
 @triton.jit
@@ -106,12 +112,16 @@ def _chunk_state_forward(
         gate_cumsum = tl.load(tile_ptrs(GateCumsum, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         chunk_decay = tl.load(GateCumsum + (batch_head * seq_len + chunk * CHUNK + CHUNK - 1) * HEAD_DIM + key_offsets)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P4.STATE.EXIT_KEYS ---
         # Set k_decayed [C,BLOCK_K], transforming writes to chunk exit.
         k_decayed = k.to(tl.float32) * tl.exp(chunk_decay[None, :] - gate_cumsum)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P4.STATE.UPDATE ---
         # Decay entry state and add exit-decayed associations.
         decayed_state = tl.exp(chunk_decay)[:, None] * state
         state = decayed_state + tl.dot(tl.trans(k_decayed), v.to(tl.float32))
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(States, state_row_base + (chunk + 1) * HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
 
@@ -133,8 +143,10 @@ def _chunk_output_forward(
     v = tl.load(tile_ptrs(V, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
     scores = tl.load(tile_ptrs(Scores, batch_head * seq_len, rows, chunk_offsets, CHUNK))
 
+    # --- STUDENT IMPLEMENTATION REQUIRED: P4.OUTPUT.LOCAL ---
     # Set out [C,BLOCK_V] from the supplied already-scaled local scores.
     out = tl.dot(scores, v)
+    # --- END OF STUDENT IMPLEMENTATION ---
 
     for key_block in range(HEAD_DIM // BLOCK_K):
         key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
@@ -142,9 +154,11 @@ def _chunk_output_forward(
         gate_cumsum = tl.load(tile_ptrs(GateCumsum, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         state = tl.load(tile_ptrs(States, state_row_base, key_offsets, value_offsets, VALUE_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P4.OUTPUT.ENTRY ---
         # Add the entry-state read, with per-channel entry decay.
         q_decayed = q * tl.exp(gate_cumsum)
         out = tl.dot(q_decayed, state, acc=out)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
     tl.store(tile_ptrs(Out, batch_head * seq_len, rows, value_offsets, VALUE_DIM), out.to(Out.dtype.element_ty))
 

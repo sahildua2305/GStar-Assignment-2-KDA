@@ -52,19 +52,27 @@ def _recurrent_forward(
         gate = tl.load(gate_ptrs + t).to(tl.float32)
         beta = tl.load(beta_ptrs + t).to(tl.float32)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.RECURRENT.DECAY ---
         # Apply scalar forgetting BEFORE prediction.
         decayed_state = tl.exp(gate) *  state
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.RECURRENT.RESIDUAL ---
         # Set error [BLOCK_V] using the decayed previous state.
         v_old = tl.sum(k[:, None] * decayed_state, axis=0)
         u = beta * (v - v_old)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.RECURRENT.WRITE ---
         # Apply the beta-weighted rank-one correction.
         state = decayed_state + k[:, None] * u[None, :]
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.RECURRENT.READ ---
         # Set out using the updated state.
         weights = q[:, None] * state
         out = tl.sum(weights, axis=0)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(out_ptrs + t * VALUE_DIM, out.to(Out.dtype.element_ty))
 
@@ -83,6 +91,7 @@ def _chunk_wy_representation(
     rows = chunk * CHUNK + chunk_offsets
     beta = tl.load(Beta + batch_head * seq_len + rows).to(tl.float32)
 
+    # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.GATES ---
     # Load scalar log gates; set inclusive gate_cumsum [C] and strictly causal decay [C,C]. Mask differences before exp.
     gate = tl.load(Gate + batch_head * seq_len + rows).to(tl.float32)
     gate_cumsum = tl.cumsum(gate, axis=0)
@@ -91,6 +100,7 @@ def _chunk_wy_representation(
     causal_mask = chunk_offsets[:, None] > chunk_offsets[None, :]
     gate_diffs = tl.where(causal_mask, gate_diffs, float('-inf'))
     decay = tl.exp(gate_diffs)
+    # --- END OF STUDENT IMPLEMENTATION ---
 
     # L = tril(diag(beta) (K K^T ⊙ decay), -1)
     lower = tl.zeros([CHUNK, CHUNK], tl.float32)
@@ -99,12 +109,16 @@ def _chunk_wy_representation(
         key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.GRAM ---
         # Accumulate beta-weighted key Gram matrix across key tiles.
         lower += beta[:, None] * tl.dot(k, tl.trans(k)) * decay
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+    # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.STRICT ---
     # Finish L with STRICT causality and relative scalar decay.
     lower_mask = chunk_offsets[:, None] > chunk_offsets[None, :]
     lower = tl.where(lower_mask, lower, 0.0)
+    # --- END OF STUDENT IMPLEMENTATION ---
 
     # A = (I + L)^{-1} for the strictly lower triangular L
     inverse = triangular_inverse(lower, CHUNK)
@@ -115,10 +129,12 @@ def _chunk_wy_representation(
         key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.W ---
         # Set w [C,BLOCK_K] using A and beta-weighted entry-decayed keys.
         k_start = k.to(tl.float32) * tl.exp(gate_cumsum[:, None])
         beta_k = beta[:, None] * k_start
         w = tl.dot(inverse, beta_k)
+        # --- END OF STUDENT IMPLEMENTATION ---
         
         tl.store(tile_ptrs(W, batch_head * seq_len, rows, key_offsets, HEAD_DIM), w.to(W.dtype.element_ty))
 
@@ -126,9 +142,11 @@ def _chunk_wy_representation(
         value_offsets = value_block * BLOCK_V + tl.arange(0, BLOCK_V)
         v = tl.load(tile_ptrs(V, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.U ---
         # Set u [C,BLOCK_V] using A and beta-weighted values.
         beta_v = beta[:, None] * v
         u = tl.dot(inverse, beta_v)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(U, batch_head * seq_len, rows, value_offsets, VALUE_DIM), u.to(U.dtype.element_ty))
 
@@ -153,14 +171,17 @@ def _chunk_state_forward(
         rows = chunk * CHUNK + chunk_offsets
         gate = tl.load(Gate + batch_head * seq_len + rows).to(tl.float32)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.STATE.PREFIX ---
         # Set inclusive gate_cumsum [C] and scalar chunk_decay.
         gate_cumsum = tl.cumsum(gate, axis=0)
         chunk_decay = tl.exp(tl.sum(gate, axis=0))
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         w = tl.load(tile_ptrs(W, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         u = tl.load(tile_ptrs(U, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.STATE.PSEUDO ---
         # Set pseudo_values [C,BLOCK_V] from u, w and the entry state.
         # pseudo_values = u.to(tl.float32) - tl.dot(w.to(tl.float32), state)
 
@@ -178,9 +199,11 @@ def _chunk_state_forward(
             prediction = tl.dot(w_tile, state_tile, acc=prediction)
 
         pseudo_values = u.to(tl.float32) - prediction
+        # --- END OF STUDENT IMPLEMENTATION ---
         
         tl.store(tile_ptrs(PseudoValues, batch_head * seq_len, rows, value_offsets, VALUE_DIM), pseudo_values.to(PseudoValues.dtype.element_ty))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.STATE.UPDATE ---
         # Decay entry state and add exit-decayed corrected writes.
         total_log_decay = tl.sum(gate, axis=0)
         exit_decay = tl.exp(total_log_decay - gate_cumsum)
@@ -197,6 +220,7 @@ def _chunk_state_forward(
             p_indices = tl.broadcast_to(token_indices[:, None], (INVERSE_BLOCK, BLOCK_V))
             pseudo_block = tl.gather(pseudo_values, p_indices, axis=0)
             state = tl.dot(tl.trans(k_block), pseudo_block, acc=state)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(States, state_row_base + (chunk + 1) * HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
 
@@ -215,6 +239,7 @@ def _chunk_output_forward(
     value_offsets = value_block * BLOCK_V + tl.arange(0, BLOCK_V)
     state_row_base = (batch_head * (num_chunks + 1) + chunk) * HEAD_DIM
 
+    # --- STUDENT IMPLEMENTATION REQUIRED: P7.OUTPUT.GATES ---
     # Set chunk-local prefixes and INCLUSIVE relative decay; mask before exponentiation.
     gate = tl.load(Gate + batch_head * seq_len + rows).to(tl.float32)
     gate_cumsum = tl.cumsum(gate, axis=0)
@@ -222,6 +247,7 @@ def _chunk_output_forward(
     causal_mask = chunk_offsets[:, None] >= chunk_offsets[None, :]
     gate_diffs = tl.where(causal_mask, gate_diffs, float('-inf'))
     decay = tl.exp(gate_diffs)
+    # --- END OF STUDENT IMPLEMENTATION ---
     
     pseudo_values = tl.load(tile_ptrs(PseudoValues, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
     inter = tl.zeros([CHUNK, BLOCK_V], tl.float32)
@@ -233,11 +259,14 @@ def _chunk_output_forward(
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         state = tl.load(tile_ptrs(States, state_row_base, key_offsets, value_offsets, VALUE_DIM))
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P7.OUTPUT.PRODUCTS ---
         # Accumulate entry-decayed inter reads and un-gated local scores.
         q_decayed = q * tl.exp(gate_cumsum)[:, None]
         inter = tl.dot(q_decayed, state, acc=inter)
         scores = tl.dot(q, tl.trans(k), acc=scores)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+    # --- STUDENT IMPLEMENTATION REQUIRED: P7.OUTPUT.COMBINE ---
     # Apply relative decay to scores; combine inter and corrected local writes.
     # out = inter + tl.dot(scores * decay, pseudo_values)
     tl.static_assert(CHUNK % INVERSE_BLOCK == 0, "CHUNK must be divisible by INVERSE_BLOCK for this implementation")
@@ -256,6 +285,7 @@ def _chunk_output_forward(
         value_tile = tl.gather(pseudo_values, value_indices, axis=0).to(tl.float32)
 
         out = tl.dot(score_tile * decay_tile, value_tile, acc=out)
+    # --- END OF STUDENT IMPLEMENTATION ---
 
     tl.store(tile_ptrs(Out, batch_head * seq_len, rows, value_offsets, VALUE_DIM), out.to(Out.dtype.element_ty))
 

@@ -53,12 +53,16 @@ def _recurrent_forward(
         k = tl.load(k_ptrs + t * HEAD_DIM).to(tl.float32)
         v = tl.load(v_ptrs + t * VALUE_DIM).to(tl.float32)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P2.RECURRENT.UPDATE ---
         # Update the [Dk, BLOCK_V] state with the current association.
         state += k[:, None] * v[None, :]
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P2.RECURRENT.READ ---
         # Set out [BLOCK_V] by reducing the updated state over key channels.
         weights = q[:, None] * state
         out = tl.sum(weights, axis=0)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(out_ptrs + t * VALUE_DIM, out.to(Out.dtype.element_ty))
 

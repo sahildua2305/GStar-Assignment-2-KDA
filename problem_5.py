@@ -49,16 +49,22 @@ def _recurrent_forward(
         v = tl.load(v_ptrs + t * VALUE_DIM).to(tl.float32)
         beta = tl.load(beta_ptrs + t).to(tl.float32)
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P5.RECURRENT.RESIDUAL ---
         # Set error [BLOCK_V] using the previous state.
         v_old = tl.sum(k[:, None] * state, axis=0)
         u = beta * (v - v_old)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P5.RECURRENT.WRITE ---
         # Apply the beta-weighted rank-one correction.
         state += k[:, None] * u[None, :]
+        # --- END OF STUDENT IMPLEMENTATION ---
 
+        # --- STUDENT IMPLEMENTATION REQUIRED: P5.RECURRENT.READ ---
         # Set out using the updated state.
         weights = q[:, None] * state
         out = tl.sum(weights, axis=0)
+        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(out_ptrs + t * VALUE_DIM, out.to(Out.dtype.element_ty))
 
