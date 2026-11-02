@@ -25,18 +25,24 @@ for source in sorted(ROOT.glob("*.py")):
 
 @app.function(image=image, gpu="T4", timeout=30 * 60)
 def run_grader(problem: int = 1, all: bool = False, dtype: str = "float32",
-               benchmark: bool = False, verbose: bool = False):
-    if not all and problem not in range(1, 10):
+               benchmark: bool = False, verbose: bool = False,
+               p9_edge: bool = False):
+    if not p9_edge and not all and problem not in range(1, 10):
         raise ValueError("problem must be between 1 and 9")
     if dtype not in ("float32", "float16", "bfloat16"):
         raise ValueError("dtype must be float32, float16, or bfloat16")
+    if p9_edge and benchmark:
+        raise ValueError("p9_edge and benchmark are separate checks")
 
-    cmd = [sys.executable, "autograder.py", "--all" if all else f"--p{problem}",
-           "--device", "cuda", "--dtype", dtype]
-    if benchmark:
-        cmd.append("--benchmark")
-    if verbose:
-        cmd.append("--verbose")
+    if p9_edge:
+        cmd = [sys.executable, "p9_edge_check.py", "--dtype", dtype]
+    else:
+        cmd = [sys.executable, "autograder.py", "--all" if all else f"--p{problem}",
+               "--device", "cuda", "--dtype", dtype]
+        if benchmark:
+            cmd.append("--benchmark")
+        if verbose:
+            cmd.append("--verbose")
 
     print("$", " ".join(cmd), flush=True)
     result = subprocess.run(cmd, cwd="/workspace")
@@ -46,5 +52,6 @@ def run_grader(problem: int = 1, all: bool = False, dtype: str = "float32",
 
 @app.local_entrypoint()
 def main(problem: int = 1, all: bool = False, dtype: str = "float32",
-         benchmark: bool = False, verbose: bool = False):
-    run_grader.remote(problem, all, dtype, benchmark, verbose)
+         benchmark: bool = False, verbose: bool = False,
+         p9_edge: bool = False):
+    run_grader.remote(problem, all, dtype, benchmark, verbose, p9_edge)
