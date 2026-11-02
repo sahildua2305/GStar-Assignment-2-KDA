@@ -86,6 +86,9 @@ def _chunk_output_forward(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P3.OUTPUT.PRODUCTS ---
         # Accumulate inter [C,BLOCK_V] and scores [C,C] across key tiles.
+        # Output programs are independent across (chunk, value_block, batch_head):
+        # each owns one [C,BLOCK_V] output tile. The key blocks are instead a
+        # reduction dimension, so this program must accumulate all of them.
         # [C, BLOCK_V] = [C, BLOCK_K] @ [BLOCK_K, BLOCK_V]
         inter = tl.dot(q.to(tl.float32), state, acc=inter)
         # [C, C] = [C, BLOCK_K] @ [BLOCK_K, C]
@@ -94,6 +97,9 @@ def _chunk_output_forward(
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P3.OUTPUT.MASK ---
     # Apply an inclusive lower-triangular mask; masked scores are ZERO.
+    # The diagonal is visible because token t writes k_t v_t^T before q_t
+    # reads the state. We read the state entering this chunk, not its exit
+    # state, because the exit state already contains later tokens in the chunk.
     mask = chunk_offsets[:, None] >= chunk_offsets[None, :]
     scores = tl.where(mask, scores, 0.0)
     # --- END OF STUDENT IMPLEMENTATION ---

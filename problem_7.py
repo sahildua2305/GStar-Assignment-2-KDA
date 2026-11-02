@@ -205,6 +205,9 @@ def _chunk_state_forward(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P7.STATE.UPDATE ---
         # Decay entry state and add exit-decayed corrected writes.
+        # Decay the carried entry state exactly once before the tiled update.
+        # The loop below only partitions the sum K_end^T @ pseudo_values;
+        # decaying inside it would apply the same chunk decay once per tile.
         total_log_decay = tl.sum(gate, axis=0)
         exit_decay = tl.exp(total_log_decay - gate_cumsum)
         k_end = k.to(tl.float32) * exit_decay[:, None]

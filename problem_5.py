@@ -51,6 +51,11 @@ def _recurrent_forward(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P5.RECURRENT.RESIDUAL ---
         # Set error [BLOCK_V] using the previous state.
+        # For beta=1 and a unit key, the corrected read at k is exactly v:
+        # k^T(S + k(v-k^T S)^T) = v. An additive write of value 5 would give
+        # the old prediction plus 5, while this correction replaces it by 5.
+        # Normalizing k makes k^T k = 1; otherwise the residual is scaled by
+        # the squared key norm and the replacement is not exact.
         v_old = tl.sum(k[:, None] * state, axis=0)
         u = beta * (v - v_old)
         # --- END OF STUDENT IMPLEMENTATION ---

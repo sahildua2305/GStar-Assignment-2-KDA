@@ -124,6 +124,11 @@ def _chunk_kernel_matrix(
                 else:
                     # --- STUDENT IMPLEMENTATION REQUIRED: P8.SCORES.ANCHOR ---
                     # For i > j, factor relative decay around anchor; accumulate the [SUB,SUB] dot.
+                    # Gates are non-positive, so prefixes decrease with time.
+                    # Every left row is after the anchor and every key row is
+                    # at or before it. Thus both exponent arguments below are
+                    # <= 0, so neither factor can overflow. Their product still
+                    # equals exp(left_cumsum - key_cumsum).
                     left_factor = tl.exp(left_cumsum - anchor[None, :])
                     right_factor = tl.exp(anchor[None, :] - key_cumsum)
                     block += tl.dot(left.to(tl.float32) * left_factor, tl.trans(k.to(tl.float32) * right_factor))

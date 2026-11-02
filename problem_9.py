@@ -41,6 +41,8 @@ def _chunk_wy_representation(
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P9.WY.LOWER ---
     # Load the supplied STRICT key-key matrix and beta-weight rows to set lower.
+    # P8 supplies these channel-gated scores, P4 supplies their gate prefixes,
+    # and the P6 triangular inverse below solves the resulting WY system.
     score_tile = tl.load(KernelMatrix + (batch_head * seq_len + rows[:, None]) * CHUNK + tl.arange(0, CHUNK))
     lower = beta[:, None] * score_tile
     # --- END OF STUDENT IMPLEMENTATION ---
@@ -101,6 +103,9 @@ def _chunk_state_forward(
   
             # --- STUDENT IMPLEMENTATION REQUIRED: P9.STATE.REDUCE ---
             # Subtract this key tile contribution from pseudo_values. Finish ALL key tiles before the update loop.
+            # Every term in u - W @ S_entry must read the same entry state.
+            # Updating a state tile early would make later terms use a mixture
+            # of entry and exit states, which is not the WY recurrence.
             pseudo_values -= tl.dot(w.to(tl.float32), state)
             # --- END OF STUDENT IMPLEMENTATION ---
 
