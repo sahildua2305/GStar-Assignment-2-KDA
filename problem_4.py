@@ -145,7 +145,7 @@ def _chunk_output_forward(
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P4.OUTPUT.LOCAL ---
     # Set out [C,BLOCK_V] from the supplied already-scaled local scores.
-    out = tl.dot(scores, v)
+    out = tl.dot(scores, v.to(tl.float32))
     # --- END OF STUDENT IMPLEMENTATION ---
 
     for key_block in range(HEAD_DIM // BLOCK_K):

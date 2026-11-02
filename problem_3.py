@@ -48,7 +48,7 @@ def _chunk_state_forward(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P3.STATE.UPDATE ---
         # Accumulate K.T @ V into the FP32 chunk boundary state.
-        state = tl.dot(tl.trans(k), v, acc=state)
+        state = tl.dot(tl.trans(k).to(tl.float32), v.to(tl.float32), acc=state)
         # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(States, state_row_base + (chunk + 1) * HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
@@ -87,9 +87,9 @@ def _chunk_output_forward(
         # --- STUDENT IMPLEMENTATION REQUIRED: P3.OUTPUT.PRODUCTS ---
         # Accumulate inter [C,BLOCK_V] and scores [C,C] across key tiles.
         # [C, BLOCK_V] = [C, BLOCK_K] @ [BLOCK_K, BLOCK_V]
-        inter = tl.dot(q, state, acc=inter)
+        inter = tl.dot(q.to(tl.float32), state, acc=inter)
         # [C, C] = [C, BLOCK_K] @ [BLOCK_K, C]
-        scores = tl.dot(q, tl.trans(k), acc=scores)
+        scores = tl.dot(q.to(tl.float32), tl.trans(k).to(tl.float32), acc=scores)
         # --- END OF STUDENT IMPLEMENTATION ---
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P3.OUTPUT.MASK ---
@@ -100,7 +100,7 @@ def _chunk_output_forward(
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P3.OUTPUT.COMBINE ---
     # Combine inter-chunk reads and intra-chunk weighted values.
-    out = inter + tl.dot(scores, v)    
+    out = inter + tl.dot(scores, v.to(tl.float32))
     # --- END OF STUDENT IMPLEMENTATION ---
 
     tl.store(tile_ptrs(Out, batch_head * seq_len, rows, value_offsets, VALUE_DIM), out.to(Out.dtype.element_ty))

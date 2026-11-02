@@ -79,7 +79,7 @@ def _chunk_wy_representation(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P6.WY.GRAM ---
         # Accumulate beta-weighted key Gram matrix across key tiles.
-        lower += beta[:, None] * tl.dot(k, tl.trans(k))
+        lower += beta[:, None] * tl.dot(k.to(tl.float32), tl.trans(k).to(tl.float32))
         # --- END OF STUDENT IMPLEMENTATION ---
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P6.WY.STRICT ---
