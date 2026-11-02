@@ -42,7 +42,7 @@ def _chunk_wy_representation(
     # --- STUDENT IMPLEMENTATION REQUIRED: P9.WY.LOWER ---
     # Load the supplied STRICT key-key matrix and beta-weight rows to set lower.
     score_tile = tl.load(KernelMatrix + (batch_head * seq_len + rows[:, None]) * CHUNK + tl.arange(0, CHUNK))
-    lower = beta[:, None] * score_tile.to(tl.float32)
+    lower = beta[:, None] * score_tile
     # --- END OF STUDENT IMPLEMENTATION ---
 
     inverse = triangular_inverse(lower, CHUNK)
@@ -101,7 +101,7 @@ def _chunk_state_forward(
   
             # --- STUDENT IMPLEMENTATION REQUIRED: P9.STATE.REDUCE ---
             # Subtract this key tile contribution from pseudo_values. Finish ALL key tiles before the update loop.
-            pseudo_values -= tl.dot(w.to(tl.float32), state.to(tl.float32))
+            pseudo_values -= tl.dot(w.to(tl.float32), state)
             # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(PseudoValues, batch_head * seq_len, rows, value_offsets, VALUE_DIM), pseudo_values.to(PseudoValues.dtype.element_ty))
@@ -117,7 +117,7 @@ def _chunk_state_forward(
             # Decay this entry-state tile and add exit-decayed corrected writes.
             exit_decay = tl.exp(chunk_decay[None, :] - gate_cumsum)
             k_end = k.to(tl.float32) * exit_decay
-            state = tl.exp(chunk_decay[:, None]) * state.to(tl.float32) + tl.dot(tl.trans(k_end).to(tl.float32), pseudo_values)
+            state = tl.exp(chunk_decay[:, None]) * state + tl.dot(tl.trans(k_end), pseudo_values)
             # --- END OF STUDENT IMPLEMENTATION ---
 
             tl.store(tile_ptrs(States, state_row_base + HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
@@ -142,7 +142,7 @@ def _chunk_output_forward(
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P9.OUTPUT.LOCAL ---
     # Set out from the already-scaled inclusive scores and pseudo-values.
-    out = tl.dot(scores.to(tl.float32), pseudo_values.to(tl.float32))
+    out = tl.dot(scores, pseudo_values.to(tl.float32))
     # --- END OF STUDENT IMPLEMENTATION ---
 
     for key_block in range(HEAD_DIM // BLOCK_K):
@@ -154,7 +154,7 @@ def _chunk_output_forward(
         # --- STUDENT IMPLEMENTATION REQUIRED: P9.OUTPUT.ENTRY ---
         # Add the channel-decayed entry-state read. q already includes scale.
         q_decayed = tl.exp(gate_cumsum) * q.to(tl.float32)
-        out += tl.dot(q_decayed.to(tl.float32), state.to(tl.float32))
+        out += tl.dot(q_decayed, state)
         # --- END OF STUDENT IMPLEMENTATION ---
 
     tl.store(tile_ptrs(Out, batch_head * seq_len, rows, value_offsets, VALUE_DIM), out.to(Out.dtype.element_ty))

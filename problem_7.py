@@ -111,7 +111,7 @@ def _chunk_wy_representation(
 
         # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.GRAM ---
         # Accumulate beta-weighted key Gram matrix across key tiles.
-        lower += beta[:, None] * tl.dot(k.to(tl.float32), tl.trans(k).to(tl.float32)) * decay
+        lower += beta[:, None] * tl.dot(k, tl.trans(k)) * decay
         # --- END OF STUDENT IMPLEMENTATION ---
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.STRICT ---
@@ -263,7 +263,7 @@ def _chunk_output_forward(
         # Accumulate entry-decayed inter reads and un-gated local scores.
         q_decayed = q * tl.exp(gate_cumsum)[:, None]
         inter = tl.dot(q_decayed, state, acc=inter)
-        scores = tl.dot(q.to(tl.float32), tl.trans(k).to(tl.float32), acc=scores)
+        scores = tl.dot(q, tl.trans(k), acc=scores)
         # --- END OF STUDENT IMPLEMENTATION ---
 
     # --- STUDENT IMPLEMENTATION REQUIRED: P7.OUTPUT.COMBINE ---
