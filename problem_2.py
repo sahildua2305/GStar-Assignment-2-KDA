@@ -42,22 +42,23 @@ def _recurrent_forward(
 
     state = tl.load(tile_ptrs(InitialState, batch_head * HEAD_DIM, key_offsets, value_offsets, VALUE_DIM))
 
+    # Each program handles a separate range of BLOCK_V value channels.
+    # Program p uses channels [p * BLOCK_V, (p + 1) * BLOCK_V),
+    # so different programs write different columns of the output and
+    # final state.
+    # Each state column is updated and read independently of other columns.
+    # Programs share Q/K inputs, but not V tiles.
     for t in range(seq_len):
         q = tl.load(q_ptrs + t * HEAD_DIM).to(tl.float32) * scale
         k = tl.load(k_ptrs + t * HEAD_DIM).to(tl.float32)
         v = tl.load(v_ptrs + t * VALUE_DIM).to(tl.float32)
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P2.RECURRENT.UPDATE ---
         # Update the [Dk, BLOCK_V] state with the current association.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P2.RECURRENT.UPDATE: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        state += k[:, None] * v[None, :]
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P2.RECURRENT.READ ---
         # Set out [BLOCK_V] by reducing the updated state over key channels.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P2.RECURRENT.READ: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        weights = q[:, None] * state
+        out = tl.sum(weights, axis=0)
 
         tl.store(out_ptrs + t * VALUE_DIM, out.to(Out.dtype.element_ty))
 

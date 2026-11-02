@@ -71,6 +71,29 @@ For shapes, precision, and kernel conventions, consult the
 [implementation reference](docs/11_reference.pdf). The formulas omit query
 scaling; use `scale=1.0` to reproduce the written examples.
 
+## Run on Modal
+
+Like Assignment 1, `modal_grader.py` launches the checker on an **L4 GPU**
+with Python 3.11. It installs `requirements.txt` remotely and uploads the current
+Python files on each run. Only the Modal client is needed locally.
+
+```bash
+# One-time setup (use your existing Modal login if already configured).
+python -m pip install modal
+python -m modal setup
+
+# Check one problem (defaults to P1).
+python -m modal run modal_grader.py --problem 1
+python -m modal run modal_grader.py --problem 2 --verbose
+
+# Check everything, or benchmark P9 after its correctness checks pass.
+python -m modal run modal_grader.py --all --dtype bfloat16
+python -m modal run modal_grader.py --problem 9 --benchmark
+```
+
+The launcher streams checker output and raises an error if any checks fail.
+Unfinished problems are expected to fail; select the problem you are working on.
+
 ## Submit
 
 Submit `problem_1.py` through `problem_9.py` with the explanation comments

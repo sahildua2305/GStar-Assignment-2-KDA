@@ -4,7 +4,6 @@ First scan chunk boundaries, then process outputs in parallel.
 States[:, :, i] is the ENTRY state for chunk i. Local scores include the diagonal.
 Accumulate across every key tile; Dk and Dv are independent.
 See the matching handout section for derivation, points, and checks.
-Delete each tl.static_assert only when you implement its TODO.
 """
 
 import torch
@@ -47,11 +46,8 @@ def _chunk_state_forward(
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         v = tl.load(tile_ptrs(V, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P3.STATE.UPDATE ---
         # Accumulate K.T @ V into the FP32 chunk boundary state.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P3.STATE.UPDATE: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        state = tl.dot(tl.trans(k), v, acc=state)
 
         tl.store(tile_ptrs(States, state_row_base + (chunk + 1) * HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
 
@@ -74,29 +70,30 @@ def _chunk_output_forward(
     inter = tl.zeros([CHUNK, BLOCK_V], tl.float32)
     scores = tl.zeros([CHUNK, CHUNK], tl.float32)
 
+    # The state pass is sequential across chunks.
+    # Chunk c + 1 needs the state produced after chunk c, so it can not
+    # start its update until chunk c's update is complete.
+    # S_{c+1} = S_c + K_c^\top V_c
+    # Within one state update, different (key_block, value_block, batch_head)
+    # tiles are independent because each owns a different region of the state.
     for key_block in range(HEAD_DIM // BLOCK_K):
         key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
         q = tl.load(tile_ptrs(Q, batch_head * seq_len, rows, key_offsets, HEAD_DIM)) * scale
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         state = tl.load(tile_ptrs(States, state_row_base, key_offsets, value_offsets, VALUE_DIM))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P3.OUTPUT.PRODUCTS ---
         # Accumulate inter [C,BLOCK_V] and scores [C,C] across key tiles.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P3.OUTPUT.PRODUCTS: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        # [C, BLOCK_V] = [C, BLOCK_K] @ [BLOCK_K, BLOCK_V]
+        inter = tl.dot(q, state, acc=inter)
+        # [C, C] = [C, BLOCK_K] @ [BLOCK_K, C]
+        scores = tl.dot(q, tl.trans(k), acc=scores)
 
-    # --- STUDENT IMPLEMENTATION REQUIRED: P3.OUTPUT.MASK ---
     # Apply an inclusive lower-triangular mask; masked scores are ZERO.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P3.OUTPUT.MASK: implement this subpart")
-    # --- END OF STUDENT IMPLEMENTATION ---
+    mask = chunk_offsets[:, None] >= chunk_offsets[None, :]
+    scores = tl.where(mask, scores, 0.0)
 
-    # --- STUDENT IMPLEMENTATION REQUIRED: P3.OUTPUT.COMBINE ---
     # Combine inter-chunk reads and intra-chunk weighted values.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P3.OUTPUT.COMBINE: implement this subpart")
-    # --- END OF STUDENT IMPLEMENTATION ---
+    out = inter + tl.dot(scores, v)    
 
     tl.store(tile_ptrs(Out, batch_head * seq_len, rows, value_offsets, VALUE_DIM), out.to(Out.dtype.element_ty))
 

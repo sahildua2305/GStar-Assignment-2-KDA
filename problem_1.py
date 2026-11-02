@@ -25,15 +25,12 @@ def linear_reference_student(query, key, value, scale=None, initial_state=None,
         k = key[:, :, t].to(state.dtype)
         v = value[:, :, t].to(state.dtype)
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P1.RECURRENT.UPDATE ---
         # Add the current key/value outer product to state [B,H,Dk,Dv].
-        raise NotImplementedError("P1.RECURRENT.UPDATE: implement the state update")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        state += k.unsqueeze(-1) @ v.unsqueeze(-2)
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P1.RECURRENT.READ ---
         # Set o [B,H,Dv] by reading the UPDATED state with q.
-        raise NotImplementedError("P1.RECURRENT.READ: implement the query read")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        # [B,H, 1, Dv] = [B,H, 1, Dk] [B,H,Dk,Dv]
+        o = (q.unsqueeze(-2) @ state).squeeze(-2)
 
         out[:, :, t] = o.to(value.dtype)
 
@@ -57,18 +54,22 @@ def linear_chunk_student(query, key, value, scale=None, initial_state=None,
         v = value[:, :, start:end].to(state.dtype)
         rows = torch.arange(end - start, device=query.device)
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P1.CHUNK.OUTPUT ---
-        # Set o [B,H,C,Dv] from the ENTRY state and local scores [B,H,C,C].
-        # Use an inclusive causal mask with zero scores above the diagonal.
-        # Do not call linear_reference_student or loop over individual tokens.
-        raise NotImplementedError("P1.CHUNK.OUTPUT: implement inter/intra chunk products")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        # Read the state entering the chunk here. Updating it first would
+        # let queries see the future tokens in the chunk.
+        o = (q @ state) # [B,H,C,Dv]
+
+        local_scores = q @ k.transpose(-1, -2)  # [B,H,C,C]
+        
+        # Keep diagonal scores only so each token can see its own key/value.
+        # Only future tokens (above the diagonal) need to be masked out.
+        causal_mask = torch.tril(torch.ones_like(local_scores, dtype=torch.bool))
+        local_scores = local_scores.masked_fill(~causal_mask, 0.0)
+        # [B,H,C,Dv] = [B,H,C,C] @ [B,H,C,Dv]
+        o += local_scores @ v  # [B,H,C,Dv]
 
         out[:, :, start:end] = o.to(value.dtype)
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P1.CHUNK.STATE ---
-        # Advance state using this chunk's keys/values, AFTER computing o.
-        raise NotImplementedError("P1.CHUNK.STATE: implement the chunk exit state")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        # Output is computed already so we can add all of this chunk to memory
+        state += k.transpose(-1, -2) @ v
 
     return finish(out, state, output_final_state)
