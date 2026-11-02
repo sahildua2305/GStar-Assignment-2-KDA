@@ -26,7 +26,19 @@ for source in sorted(ROOT.glob("*.py")):
 @app.function(image=image, gpu="T4", timeout=30 * 60)
 def run_grader(problem: int = 1, all: bool = False, dtype: str = "float32",
                benchmark: bool = False, verbose: bool = False,
-               p9_edge: bool = False):
+               p9_edge: bool = False, toolchain: bool = False):
+    if toolchain:
+        import platform
+        import torch
+        import triton
+
+        print(f"Python={platform.python_version()}")
+        print(f"PyTorch={torch.__version__}")
+        print(f"Triton={triton.__version__}")
+        print(f"CUDA={torch.version.cuda}")
+        print(f"GPU={torch.cuda.get_device_name()}")
+        return
+
     if not p9_edge and not all and problem not in range(1, 10):
         raise ValueError("problem must be between 1 and 9")
     if dtype not in ("float32", "float16", "bfloat16"):
@@ -53,5 +65,5 @@ def run_grader(problem: int = 1, all: bool = False, dtype: str = "float32",
 @app.local_entrypoint()
 def main(problem: int = 1, all: bool = False, dtype: str = "float32",
          benchmark: bool = False, verbose: bool = False,
-         p9_edge: bool = False):
-    run_grader.remote(problem, all, dtype, benchmark, verbose, p9_edge)
+         p9_edge: bool = False, toolchain: bool = False):
+    run_grader.remote(problem, all, dtype, benchmark, verbose, p9_edge, toolchain)
