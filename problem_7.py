@@ -53,7 +53,7 @@ def _recurrent_forward(
         beta = tl.load(beta_ptrs + t).to(tl.float32)
 
         # Apply scalar forgetting BEFORE prediction.
-        decayed_state = tl.exp(gate)[:, None] *  state
+        decayed_state = tl.exp(gate) *  state
 
         # Set error [BLOCK_V] using the decayed previous state.
         v_old = tl.sum(k[:, None] * decayed_state, axis=0)
@@ -83,11 +83,14 @@ def _chunk_wy_representation(
     rows = chunk * CHUNK + chunk_offsets
     beta = tl.load(Beta + batch_head * seq_len + rows).to(tl.float32)
 
-    # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.GATES ---
     # Load scalar log gates; set inclusive gate_cumsum [C] and strictly causal decay [C,C]. Mask differences before exp.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P7.WY.GATES: implement this subpart")
-    # --- END OF STUDENT IMPLEMENTATION ---
+    gate = tl.load(Gate + batch_head * seq_len + rows).to(tl.float32)
+    gate_cumsum = tl.cumsum(gate, axis=0)
+    
+    gate_diffs = gate_cumsum[:, None] - gate_cumsum[None, :]
+    causal_mask = chunk_offsets[:, None] > chunk_offsets[None, :]
+    gate_diffs = tl.where(causal_mask, gate_diffs, float('-inf'))
+    decay = tl.exp(gate_diffs)
 
     # L = tril(diag(beta) (K K^T ⊙ decay), -1)
     lower = tl.zeros([CHUNK, CHUNK], tl.float32)
@@ -96,17 +99,12 @@ def _chunk_wy_representation(
         key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.GRAM ---
         # Accumulate beta-weighted key Gram matrix across key tiles.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P7.WY.GRAM: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        lower += beta[:, None] * tl.dot(k, tl.trans(k)) * decay
 
-    # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.STRICT ---
     # Finish L with STRICT causality and relative scalar decay.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P7.WY.STRICT: implement this subpart")
-    # --- END OF STUDENT IMPLEMENTATION ---
+    lower_mask = chunk_offsets[:, None] > chunk_offsets[None, :]
+    lower = tl.where(lower_mask, lower, 0.0)
 
     # A = (I + L)^{-1} for the strictly lower triangular L
     inverse = triangular_inverse(lower, CHUNK)
@@ -117,23 +115,20 @@ def _chunk_wy_representation(
         key_offsets = key_block * BLOCK_K + tl.arange(0, BLOCK_K)
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.W ---
         # Set w [C,BLOCK_K] using A and beta-weighted entry-decayed keys.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P7.WY.W: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
-
+        k_start = k.to(tl.float32) * tl.exp(gate_cumsum[:, None])
+        beta_k = beta[:, None] * k_start
+        w = tl.dot(inverse, beta_k)
+        
         tl.store(tile_ptrs(W, batch_head * seq_len, rows, key_offsets, HEAD_DIM), w.to(W.dtype.element_ty))
 
     for value_block in range(VALUE_DIM // BLOCK_V):
         value_offsets = value_block * BLOCK_V + tl.arange(0, BLOCK_V)
         v = tl.load(tile_ptrs(V, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P7.WY.U ---
         # Set u [C,BLOCK_V] using A and beta-weighted values.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P7.WY.U: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        beta_v = beta[:, None] * v
+        u = tl.dot(inverse, beta_v)
 
         tl.store(tile_ptrs(U, batch_head * seq_len, rows, value_offsets, VALUE_DIM), u.to(U.dtype.element_ty))
 
@@ -158,29 +153,50 @@ def _chunk_state_forward(
         rows = chunk * CHUNK + chunk_offsets
         gate = tl.load(Gate + batch_head * seq_len + rows).to(tl.float32)
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P7.STATE.PREFIX ---
         # Set inclusive gate_cumsum [C] and scalar chunk_decay.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P7.STATE.PREFIX: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        gate_cumsum = tl.cumsum(gate, axis=0)
+        chunk_decay = tl.exp(tl.sum(gate, axis=0))
 
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         w = tl.load(tile_ptrs(W, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         u = tl.load(tile_ptrs(U, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P7.STATE.PSEUDO ---
         # Set pseudo_values [C,BLOCK_V] from u, w and the entry state.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P7.STATE.PSEUDO: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        # pseudo_values = u.to(tl.float32) - tl.dot(w.to(tl.float32), state)
 
+        KEY_TILE: tl.constexpr = min(HEAD_DIM, INVERSE_BLOCK)
+        tl.static_assert(HEAD_DIM % KEY_TILE == 0)
+        prediction = tl.zeros([CHUNK, BLOCK_V], tl.float32)
+
+        # Accumulate every key tile before forming the correction.
+        for key_block in tl.static_range(HEAD_DIM // KEY_TILE):
+            indices = key_block * KEY_TILE + tl.arange(0, KEY_TILE)
+            w_indices = tl.broadcast_to(indices[None, :], (CHUNK, KEY_TILE))
+            w_tile = tl.gather(w, w_indices, axis=1).to(tl.float32)
+            state_indices = tl.broadcast_to(indices[:, None], (KEY_TILE, BLOCK_V))
+            state_tile = tl.gather(state, state_indices, axis=0)
+            prediction = tl.dot(w_tile, state_tile, acc=prediction)
+
+        pseudo_values = u.to(tl.float32) - prediction
+        
         tl.store(tile_ptrs(PseudoValues, batch_head * seq_len, rows, value_offsets, VALUE_DIM), pseudo_values.to(PseudoValues.dtype.element_ty))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P7.STATE.UPDATE ---
         # Decay entry state and add exit-decayed corrected writes.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P7.STATE.UPDATE: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        total_log_decay = tl.sum(gate, axis=0)
+        exit_decay = tl.exp(total_log_decay - gate_cumsum)
+        k_end = k.to(tl.float32) * exit_decay[:, None]
+        
+        # state = chunk_decay * state + tl.dot(tl.trans(k_end).to(tl.float32), pseudo_values)
+        tl.static_assert(CHUNK % INVERSE_BLOCK == 0, "CHUNK must be divisible by INVERSE_BLOCK for this implementation")
+        state = chunk_decay * state
+
+        for sub_chunk in range(CHUNK // INVERSE_BLOCK):
+            token_indices = sub_chunk * INVERSE_BLOCK + tl.arange(0, INVERSE_BLOCK)
+            k_indices = tl.broadcast_to(token_indices[:, None], (INVERSE_BLOCK, HEAD_DIM))
+            k_block = tl.gather(k_end, k_indices, axis=0).to(tl.float32)
+            p_indices = tl.broadcast_to(token_indices[:, None], (INVERSE_BLOCK, BLOCK_V))
+            pseudo_block = tl.gather(pseudo_values, p_indices, axis=0)
+            state = tl.dot(tl.trans(k_block), pseudo_block, acc=state)
 
         tl.store(tile_ptrs(States, state_row_base + (chunk + 1) * HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
 
@@ -199,12 +215,14 @@ def _chunk_output_forward(
     value_offsets = value_block * BLOCK_V + tl.arange(0, BLOCK_V)
     state_row_base = (batch_head * (num_chunks + 1) + chunk) * HEAD_DIM
 
-    # --- STUDENT IMPLEMENTATION REQUIRED: P7.OUTPUT.GATES ---
     # Set chunk-local prefixes and INCLUSIVE relative decay; mask before exponentiation.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P7.OUTPUT.GATES: implement this subpart")
-    # --- END OF STUDENT IMPLEMENTATION ---
-
+    gate = tl.load(Gate + batch_head * seq_len + rows).to(tl.float32)
+    gate_cumsum = tl.cumsum(gate, axis=0)
+    gate_diffs = gate_cumsum[:, None] - gate_cumsum[None, :]
+    causal_mask = chunk_offsets[:, None] >= chunk_offsets[None, :]
+    gate_diffs = tl.where(causal_mask, gate_diffs, float('-inf'))
+    decay = tl.exp(gate_diffs)
+    
     pseudo_values = tl.load(tile_ptrs(PseudoValues, batch_head * seq_len, rows, value_offsets, VALUE_DIM))
     inter = tl.zeros([CHUNK, BLOCK_V], tl.float32)
     scores = tl.zeros([CHUNK, CHUNK], tl.float32)
@@ -215,17 +233,29 @@ def _chunk_output_forward(
         k = tl.load(tile_ptrs(K, batch_head * seq_len, rows, key_offsets, HEAD_DIM))
         state = tl.load(tile_ptrs(States, state_row_base, key_offsets, value_offsets, VALUE_DIM))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P7.OUTPUT.PRODUCTS ---
         # Accumulate entry-decayed inter reads and un-gated local scores.
-        # TODO: replace this assertion with your implementation.
-        tl.static_assert(False, "P7.OUTPUT.PRODUCTS: implement this subpart")
-        # --- END OF STUDENT IMPLEMENTATION ---
+        q_decayed = q * tl.exp(gate_cumsum)[:, None]
+        inter = tl.dot(q_decayed, state, acc=inter)
+        scores = tl.dot(q, tl.trans(k), acc=scores)
 
-    # --- STUDENT IMPLEMENTATION REQUIRED: P7.OUTPUT.COMBINE ---
     # Apply relative decay to scores; combine inter and corrected local writes.
-    # TODO: replace this assertion with your implementation.
-    tl.static_assert(False, "P7.OUTPUT.COMBINE: implement this subpart")
-    # --- END OF STUDENT IMPLEMENTATION ---
+    # out = inter + tl.dot(scores * decay, pseudo_values)
+    tl.static_assert(CHUNK % INVERSE_BLOCK == 0, "CHUNK must be divisible by INVERSE_BLOCK for this implementation")
+    out = inter
+
+    for token_block in tl.static_range(CHUNK // INVERSE_BLOCK):
+        indices = token_block * INVERSE_BLOCK + tl.arange(0, INVERSE_BLOCK)
+
+        # Select columns corresponding to this group of source tokens.
+        score_indices = tl.broadcast_to(indices[None, :], (CHUNK, INVERSE_BLOCK))
+        score_tile = tl.gather(scores, score_indices, axis=1)
+        decay_tile = tl.gather(decay, score_indices, axis=1)
+
+        # Select the matching correction rows.
+        value_indices = tl.broadcast_to(indices[:, None], (INVERSE_BLOCK, BLOCK_V))
+        value_tile = tl.gather(pseudo_values, value_indices, axis=0).to(tl.float32)
+
+        out = tl.dot(score_tile * decay_tile, value_tile, acc=out)
 
     tl.store(tile_ptrs(Out, batch_head * seq_len, rows, value_offsets, VALUE_DIM), out.to(Out.dtype.element_ty))
 

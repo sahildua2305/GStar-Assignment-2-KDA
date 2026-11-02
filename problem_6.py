@@ -146,7 +146,6 @@ def _chunk_state_forward(
 
         tl.store(tile_ptrs(PseudoValues, batch_head * seq_len, rows, value_offsets, VALUE_DIM), pseudo_values.to(PseudoValues.dtype.element_ty))
 
-        # --- STUDENT IMPLEMENTATION REQUIRED: P6.STATE.UPDATE ---
         # Advance the boundary using K.T @ pseudo_values.
         # state = tl.dot(tl.trans(k).to(tl.float32), pseudo_values, acc=state)
         tl.static_assert(CHUNK % INVERSE_BLOCK == 0, "CHUNK must be divisible by INVERSE_BLOCK for this implementation")
@@ -158,7 +157,6 @@ def _chunk_state_forward(
             p_indices = tl.broadcast_to(token_indices[:, None], (INVERSE_BLOCK, BLOCK_V))
             pseudo_block = tl.gather(pseudo_values, p_indices, axis=0)
             state = tl.dot(tl.trans(k_block), pseudo_block, acc=state)
-        # --- END OF STUDENT IMPLEMENTATION ---
 
         tl.store(tile_ptrs(States, state_row_base + (chunk + 1) * HEAD_DIM, key_offsets, value_offsets, VALUE_DIM), state)
 
